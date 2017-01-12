@@ -9,7 +9,6 @@
 #include <sensor_msgs/image_encodings.h>
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
-#include <opencv2/highgui/highgui.hpp>
 
 #include <boost/bind.hpp>
 #include <boost/timer.hpp>
@@ -25,16 +24,13 @@
 
 #include "dn_object_detect/DetectedObjects.h"
 
-#include "std_msgs/String.h"
-
-#include <sstream>
 namespace uts_perp {
 
 using namespace std;
 using namespace cv;
   
 static const int kPublishFreq = 10;
-static const string kDefaultDevice = "/buglabugla/left/image_raw";
+static const string kDefaultDevice = "/wide_stereo/right/image_rect_color";
 static const string kYOLOModel = "data/yolo.weights";
 static const string kYOLOConfig = "data/yolo.cfg";
 
@@ -58,11 +54,12 @@ void convert_yolo_detections(float *predictions, int classes, int num, int squar
 MultiClassObjectDetector::MultiClassObjectDetector() :
   imgTrans_( priImgNode_ ),
   initialised_( false ),
-  doDetection_( true ),
+  doDetection_( false ),
   debugRequests_( 0 ),
   srvRequests_( 0 ),
   procThread_( NULL )
 {
+  priImgNode_.setCallbackQueue( &imgQueue_ );
 }
 
 MultiClassObjectDetector::~MultiClassObjectDetector()
@@ -78,7 +75,7 @@ void MultiClassObjectDetector::init()
   priNh.param<std::string>( "camera", cameraDevice_, kDefaultDevice );
   priNh.param<std::string>( "yolo_model", yoloModelFile, kYOLOModel );
   priNh.param<std::string>( "yolo_config", yoloConfigFile, kYOLOConfig );
-  priNh.param( "threshold", threshold_, 0.04f );
+  priNh.param( "threshold", threshold_, 0.2f );
   
   const boost::filesystem::path modelFilePath = yoloModelFile;
   const boost::filesystem::path configFilepath = yoloConfigFile;
@@ -98,19 +95,30 @@ void MultiClassObjectDetector::init()
   }
 
   ROS_INFO( "Loaded detection model data." );
+  
+  procThread_ = new AsyncSpinner( 1, &imgQueue_ );
+  procThread_->start();
+
   initialised_ = true;
 
-  imgSub_ = imgTrans_.subscribe( cameraDevice_, 1, &MultiClassObjectDetector::processingRawImages, this );
+  dtcPub_ = priImgNode_.advertise<dn_object_detect::DetectedObjects>( "/dn_object_detect/detected_objects", 1,
+      boost::bind( &MultiClassObjectDetector::startDetection, this ),
+      boost::bind( &MultiClassObjectDetector::stopDetection, this) );
 
-  dtcPub_ = priImgNode_.advertise<dn_object_detect::DetectedObjects>( "/dn_object_detect/detected_objects", 1 );
-  //bb_pub = priImgNode_.advertise<std_msgs::String>("/bb_coordinates", 1);
-  imgPub_ = imgTrans_.advertise("/yolo/image",1);
-
+  imgPub_ = imgTrans_.advertise( "/dn_object_detect/debug_view", 1,
+      boost::bind( &MultiClassObjectDetector::startDebugView, this ),
+      boost::bind( &MultiClassObjectDetector::stopDebugView, this) );
 }
 
 void MultiClassObjectDetector::fini()
 {
+  srvRequests_ = 1; // reset requests
+  this->stopDetection();
 
+  if (procThread_) {
+    delete procThread_;
+    procThread_ = NULL;
+  }
   free_network( darkNet_ );
   initialised_ = false;
 }
@@ -136,10 +144,12 @@ void MultiClassObjectDetector::doObjectDetection()
   DetectedList detectObjs;
   detectObjs.reserve( 30 ); // silly hardcode
 
- 
-    
+  while (doDetection_) {
+    {
+      boost::mutex::scoped_lock lock( mutex_ );
       if (imgMsgPtr_.get() == NULL) {
         publish_rate.sleep();
+        continue;
       }
       try {
         cv_ptr_ = cv_bridge::toCvCopy( imgMsgPtr_, sensor_msgs::image_encodings::BGR8 );
@@ -149,9 +159,10 @@ void MultiClassObjectDetector::doObjectDetection()
         ROS_ERROR( "Unable to convert image message to mat." );
         imgMsgPtr_.reset();
         publish_rate.sleep();
+        continue;
       }
       imgMsgPtr_.reset();
-    
+    }
 
     if (cv_ptr_.get()) {
       IplImage img = cv_ptr_->image;
@@ -159,62 +170,26 @@ void MultiClassObjectDetector::doObjectDetection()
       image sized = resize_image( im, darkNet_->w, darkNet_->h );
       float *X = sized.data;
       float *predictions = network_predict( darkNet_, X );
-
-      ROS_INFO( "Detction done" );
-
       //printf("%s: Predicted in %f seconds.\n", input, sec(clock()-time));
-      convert_yolo_detections( predictions, detectLayer_.classes, detectLayer_.n, detectLayer_.sqrt, detectLayer_.side, 1, 1, threshold_, probs, boxes, 0);
+      convert_yolo_detections( predictions, detectLayer_.classes, detectLayer_.n, detectLayer_.sqrt,
+          detectLayer_.side, 1, 1, threshold_, probs, boxes, 0);
       if (nms) {
-        do_nms_sort( boxes, probs, maxNofBoxes_, detectLayer_.classes, nms );
+        do_nms_sort( boxes, probs, maxNofBoxes_,
+            detectLayer_.classes, nms );
       }
-        std::cerr<<"no of classes  "<<detectLayer_.classes<<"\n";
-      for( int inc = 0; inc < detectLayer_.classes; inc++)
-        std::cerr<<*(predictions+inc)<<"   ";
 
       this->consolidateDetectedObjects( &im, boxes, probs, detectObjs );
-
-
-  cv::Scalar boundColour( 255, 0, 255 );
-  cv::Scalar connColour( 209, 47, 27 );
-
-  for (size_t i = 0; i < detectObjs.size(); i++) { 
-    dn_object_detect::ObjectInfo obj = detectObjs[i];
-	   // cv::rectangle( cv_ptr_->image, cv::Rect(obj.tl_x, obj.tl_y, obj.width, obj.height),
-	   //     boundColour, 2 );
-
-    // only write text on the head or body if no head is detected.
-   // std::string box_text = format( "%s prob=%.2f", obj.type.c_str(), obj.prob );
-    // Calculate the position for annotated text (make sure we don't
-    // put illegal values in there):
-   // cv::Point2i txpos( std::max(obj.tl_x - 10, 0),
-    //                  std::max(obj.tl_y - 10, 0) );
-    // And now put it into the image:
-   // putText( cv_ptr_->image, box_text, txpos, FONT_HERSHEY_PLAIN, 1.0, CV_RGB(0,255,0), 2.0);
-  //cv_ptr_->image = cv_ptr_->image(cv::Rect(obj.tl_x, obj.tl_y, obj.width, obj.height));
-    // std_msgs::String msg;
-    // std::stringstream ss;
-    // ss << obj.tl_x << " " << obj.tl_y << " " << obj.width << " " << obj.height;
-    // msg.data = ss.str();
-    // bb_pub.publish(msg);
-    cv::Mat target(cv_ptr_->image.size(), cv_ptr_->image.type());
-    target = cv::Scalar(255,255,255);
-    cv::Mat subImage = target(cv::Rect(obj.tl_x, obj.tl_y, obj.width, obj.height));
-	cv_ptr_->image(cv::Rect(obj.tl_x, obj.tl_y, obj.width, obj.height)).copyTo(subImage);
-    sensor_msgs::ImagePtr msg_1 = cv_bridge::CvImage(std_msgs::Header(), "bgr8", target).toImageMsg();
-    imgPub_.publish(msg_1);
-  }
-
-//imshow("result",cv_ptr_->image);
-// waitKey(30);
       //draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, 0, 20);
       free_image(im);
-
       free_image(sized);
-
-
-//  publish_rate.sleep();
-  }
+      this->publishDetectedObjects( detectObjs );
+      if (debugRequests_ > 0)
+        this->drawDebug( detectObjs );
+    }
     cv_ptr_.reset();
+
+    publish_rate.sleep();
+  }
 
   // clean up
   for(int j = 0; j < maxNofBoxes_; ++j) {
@@ -226,10 +201,106 @@ void MultiClassObjectDetector::doObjectDetection()
   
 void MultiClassObjectDetector::processingRawImages( const sensor_msgs::ImageConstPtr& msg )
 {
+  // assume we cannot control the framerate (i.e. default 30FPS)
+  boost::mutex::scoped_lock lock( mutex_ );
   ROS_INFO( "got IMage" );
 
   imgMsgPtr_ = msg;
-  doObjectDetection();
+}
+
+void MultiClassObjectDetector::startDebugView()
+{
+  if (debugRequests_ == 0)
+    this->startDetection();
+  
+  debugRequests_++;
+}
+
+void MultiClassObjectDetector::stopDebugView() 
+{
+  debugRequests_--;
+  if (debugRequests_ <= 0)
+    this->stopDetection();
+
+}
+
+void MultiClassObjectDetector::startDetection()
+{
+  if (!initialised_) {
+    ROS_ERROR( "Detector is not initialised correctly!\n" );
+    return;
+  }
+  srvRequests_ ++;
+  if (srvRequests_ > 1)
+    return;
+
+  doDetection_ = true;
+  cv_ptr_.reset();
+  imgMsgPtr_.reset();
+
+  ROS_INFO( "Sarthak." );
+
+  imgSub_ = imgTrans_.subscribe( cameraDevice_, 1,
+                                  &MultiClassObjectDetector::processingRawImages, this );
+  
+  object_detect_thread_ = new boost::thread( &MultiClassObjectDetector::doObjectDetection, this );
+
+  ROS_INFO( "Starting multi-class object detection service." );
+}
+
+void MultiClassObjectDetector::stopDetection()
+{
+  srvRequests_--;
+  if (srvRequests_ > 0)
+    return;
+
+  doDetection_ = false;
+ 
+  if (object_detect_thread_) {
+    object_detect_thread_->join();
+    delete object_detect_thread_;
+    object_detect_thread_ = NULL;
+  }
+
+  imgSub_.shutdown();
+
+  ROS_INFO( "Stopping multi-class object detection service." );
+}
+
+void MultiClassObjectDetector::publishDetectedObjects( const DetectedList & objs )
+{
+  dn_object_detect::DetectedObjects tObjMsg;
+  tObjMsg.header = cv_ptr_->header;
+  
+  tObjMsg.objects.resize( objs.size() );
+
+  for (size_t i = 0; i < objs.size(); i++) {
+    tObjMsg.objects[i] = objs[i];
+  }
+
+  dtcPub_.publish( tObjMsg );
+}
+
+void MultiClassObjectDetector::drawDebug( const DetectedList & objs )
+{
+  cv::Scalar boundColour( 255, 0, 255 );
+  cv::Scalar connColour( 209, 47, 27 );
+
+  for (size_t i = 0; i < objs.size(); i++) {
+    dn_object_detect::ObjectInfo obj = objs[i];
+    cv::rectangle( cv_ptr_->image, cv::Rect(obj.tl_x, obj.tl_y, obj.width, obj.height),
+        boundColour, 2 );
+
+    // only write text on the head or body if no head is detected.
+    std::string box_text = format( "%s prob=%.2f", obj.type.c_str(), obj.prob );
+    // Calculate the position for annotated text (make sure we don't
+    // put illegal values in there):
+    cv::Point2i txpos( std::max(obj.tl_x - 10, 0),
+                      std::max(obj.tl_y - 10, 0) );
+    // And now put it into the image:
+    putText( cv_ptr_->image, box_text, txpos, FONT_HERSHEY_PLAIN, 1.0, CV_RGB(0,255,0), 2.0);
+  }
+  imgPub_.publish( cv_ptr_->toImageMsg() );
 }
 
 void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box * boxes,
@@ -242,10 +313,7 @@ void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box
   objList.clear();
 
   for(int i = 0; i < maxNofBoxes_; ++i){
-    //objclass = max_index( probs[i], NofVoClasses );
-    objclass = 6;
-    //if(objclass!=6)
-    //	continue;
+    objclass = max_index( probs[i], NofVoClasses );
     prob = probs[i][objclass];
 
     if (prob > threshold_) {

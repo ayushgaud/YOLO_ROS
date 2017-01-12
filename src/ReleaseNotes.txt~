@@ -1,0 +1,11 @@
+ate    : 08/12/2015
+Version : lane_detection_improved
+
+---------------------------------------------------------------------------
+This version gives improved performance compared to previous release.
+This is tested on KITTI data set and 640x480 data sets.
+The current version runs at 10 fps.
+
+Major changes:
+
+1. lane_detection.txt

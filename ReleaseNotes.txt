@@ -1,0 +1,13 @@
+ate    : 08/12/2015
+Version : YOLO_Detection_Module
+
+---------------------------------------------------------------------------
+This version gives improved performance compared to version on.
+This is tested on Jubilee Hills data set.
+The current version runs at 10 fps.
+
+Major changes:
+
+1. dn_object_detect.txt
+	Changes were made to remove unnecessary things.
+

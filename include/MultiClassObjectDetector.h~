@@ -20,7 +20,7 @@
 #include <image_transport/image_transport.h>
 #include <cv_bridge/cv_bridge.h>
 
-#include <darknet/yolo.h>
+#include <darknet/src/yolo.h>
 
 #include "dn_object_detect/ObjectInfo.h"
 
@@ -47,7 +47,7 @@ private:
   image_transport::ImageTransport imgTrans_;
   image_transport::Publisher imgPub_;
   image_transport::Subscriber imgSub_;
-  //Publisher bb_pub;
+  
   Publisher dtcPub_;
 
   bool doDetection_;

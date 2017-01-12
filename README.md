@@ -1,6 +1,10 @@
-# Multi-class object detection with darknet/yolo
+
+# Multi-class object detection with darknet/yolo (PBVS Branch)
+
+[PBVS code] (https://github.com/ayushgaud/pbvs)
 
 ## Introduction
+
 This is a ROS node for muli-class object detection using darknet/yolo Deep Neural Network (DNN).
 
 
@@ -26,8 +30,6 @@ catkin_make dn_object_detect
 
 ```roslaunch dn_object_detect objdetect.launch```
 
-The node will publish the following two topics
+The node will publish the following topic
 
-```/dn_object_detect/detected_objects```  detected object list.
-
-```/dn_object_detect/debug_view``` debugging image stream.
+```/yolo/image``` Cropped object image
