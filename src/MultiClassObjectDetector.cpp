@@ -160,16 +160,16 @@ void MultiClassObjectDetector::doObjectDetection()
       float *X = sized.data;
       float *predictions = network_predict( darkNet_, X );
 
-      ROS_INFO( "Detction done" );
+      //ROS_INFO( "Detction done" );
 
       //printf("%s: Predicted in %f seconds.\n", input, sec(clock()-time));
       convert_yolo_detections( predictions, detectLayer_.classes, detectLayer_.n, detectLayer_.sqrt, detectLayer_.side, 1, 1, threshold_, probs, boxes, 0);
       if (nms) {
         do_nms_sort( boxes, probs, maxNofBoxes_, detectLayer_.classes, nms );
       }
-        std::cerr<<"no of classes  "<<detectLayer_.classes<<"\n";
-      for( int inc = 0; inc < detectLayer_.classes; inc++)
-        std::cerr<<*(predictions+inc)<<"   ";
+      //   std::cerr<<"no of classes  "<<detectLayer_.classes<<"\n";
+      // for( int inc = 0; inc < detectLayer_.classes; inc++)
+      //   std::cerr<<*(predictions+inc)<<"   ";
 
       this->consolidateDetectedObjects( &im, boxes, probs, detectObjs );
 
@@ -236,19 +236,25 @@ void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box
       float **probs, DetectedList & objList )
 {
   //printf( "max_nofb %d, NofVoClasses %d\n", max_nofb, NofVoClasses );
-  int objclass = 0;
+  int objclass = 6;
   float prob = 0.0;
-
+  int max_ele = 0;
+  int max_index = 0;
   objList.clear();
+for(int i = 0; i < maxNofBoxes_; ++i){
+  prob = probs[i][objclass];
+   if (boxes[i].w * boxes[i].h > max_ele && prob > threshold_){
+    max_ele = boxes[i].w * boxes[i].h;
+    max_index = i;}
 
-  for(int i = 0; i < maxNofBoxes_; ++i){
+}
+ 
     //objclass = max_index( probs[i], NofVoClasses );
-    objclass = 6;
+    
     //if(objclass!=6)
     //	continue;
-    prob = probs[i][objclass];
-
-    if (prob > threshold_) {
+      prob = probs[max_index][objclass];
+      if (prob > threshold_ && prob <= 1) {
       int width = pow( prob, 0.5 ) * 10 + 1;
       dn_object_detect::ObjectInfo newObj;
       newObj.type = VoClassNames[objclass];
@@ -264,13 +270,13 @@ void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box
       rgb[0] = red;
       rgb[1] = green;
       rgb[2] = blue;
-      box b = boxes[i];
+      box b = boxes[max_index];
       */
 
-      int left  = (boxes[i].x - boxes[i].w/2.) * im->w;
-      int right = (boxes[i].x + boxes[i].w/2.) * im->w;
-      int top   = (boxes[i].y - boxes[i].h/2.) * im->h;
-      int bot   = (boxes[i].y + boxes[i].h/2.) * im->h;
+      int left  = (boxes[max_index].x - boxes[max_index].w/2.) * im->w;
+      int right = (boxes[max_index].x + boxes[max_index].w/2.) * im->w;
+      int top   = (boxes[max_index].y - boxes[max_index].h/2.) * im->h;
+      int bot   = (boxes[max_index].y + boxes[max_index].h/2.) * im->h;
 
       if (right > im->w-1)  right = im->w-1;
       if (bot > im->h-1)    bot = im->h-1;
@@ -283,7 +289,7 @@ void MultiClassObjectDetector::consolidateDetectedObjects( const image * im, box
       //draw_box_width(im, left, top, right, bot, width, red, green, blue);
       //if (labels) draw_label(im, top + width, left, labels[class], rgb);
     }
-  }
+  
 }
 
 } // namespace uts_perp

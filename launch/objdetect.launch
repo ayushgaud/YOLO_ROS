@@ -1,9 +1,9 @@
 <launch>
   <node pkg="dn_object_detect" type="dn_object_detect" name="dn_object_detect" output="screen">
-    <param name="camera" type="str" value="/bebop/image_raw"/>
+    <param name="camera" type="str" value="/bebop2/camera_base/image_raw"/>
     <param name="_image_transport" type="str" value="raw"/>
-    <param name="yolo_config" type="str" value="/home/aseem/bebop/src/YOLO_ROS/yolo.cfg"/>
-    <param name="yolo_model" type="str" value="/home/aseem/bebop/src/YOLO_ROS/yolo.weights"/>
+    <param name="yolo_config" type="str" value="/home/rrcadmin/catkin_ws/src/YOLO_ROS/yolo.cfg"/>
+    <param name="yolo_model" type="str" value="/home/rrcadmin/catkin_ws/src/YOLO_ROS/yolo.weights"/>
     <param name="threshold" type="double" value="0.2"/>
   </node>
 </launch>
